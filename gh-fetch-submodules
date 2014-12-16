@@ -54,13 +54,16 @@ EOT
     exit 0;
 }
 
+die "seems like a Git repository, cowardly refusing to run\n"
+    if -e ".git";
+
 # setup the params
 $api_url =~ s{/$}{};
 my $repo = shift @ARGV
     or die "repository (owner/repo) not specified (see --help)\n";
 if (! defined $ref) {
     $cwd =~ m{-([0-9]+(?:\.[0-9]+(?:\.[0-9]+|)|))}
-         or die "failed to extract version number from $cwd";
+         or die "failed to extract version number from $cwd, please use --ref\n";
     $ref = "v$1";
 }
 

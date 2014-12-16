@@ -17,3 +17,5 @@ fetch-submodules:
 test: fetch-submodules
         ...
 ```
+
+The script is written for maximum portability.  It is written in Perl, using the modules that are bundled with Perl 5.14 only.

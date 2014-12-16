@@ -1,0 +1,105 @@
+#! /usr/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use HTTP::Tiny;
+use JSON::PP qw(decode_json);
+use MIME::Base64 qw(decode_base64);
+use POSIX qw(getcwd);
+
+my $cwd = getcwd;
+
+my $ref;
+my $api_url =  "https://api.github.com/";
+my $help;
+
+GetOptions(
+    "ref=s"     => \$ref,
+    "api-url=s" => \$api_url,
+    "help"      => \$help,
+);
+if ($help) {
+    print << "EOT";
+Usage: $0 [options] <owner>/<repo>
+Options:
+  --ref=<commit-ish>  specifies the commit-ish (default: extracted from the
+                      working directory name)
+  --api-url=<url>     GitHub API URL (default: https://api.github.com/)
+  --help              prints this help
+
+EOT
+    exit 0;
+}
+
+# setup the params
+$api_url =~ s{/$}{};
+my $repo = shift @ARGV
+    or die "repository (owner/repo) not specified (see --help)\n";
+if (! defined $ref) {
+    $cwd =~ m{-([0-9]+(?:\.[0-9]+(?:\.[0-9]+|)|))}
+         or die "failed to extract version number from $cwd";
+    $ref = "v$1";
+}
+
+# get list of submodules
+print STDERR "fetching .gitmodule...\n";
+my %submodules = get_map_of_submodules($repo);
+
+for my $dir (sort keys %submodules) {
+    my $subrepo = $submodules{$dir};
+
+    # fetch the submodule version
+    my $sha = fetch_json("$api_url/repos/$repo/contents/$dir?ref=$ref")->{sha};
+
+    printf STDERR 'extracting %s@%.7s to %s'."\n", $subrepo, $sha, $dir;
+
+    # fetch the submodule archive
+    my $tgz = fetch_url("$api_url/repos/$subrepo/tarball/$ref");
+
+    # extract the archive
+    system(qw(rm -rf), $dir) == 0
+        or die "failed to remove existing dir:$dir:$?";
+    mkdir $dir
+        or die "failed to recreate dir:$dir:$!";
+    chdir $dir
+        or die "failed to chdir to $dir:$!";
+    open my $fh, "|-", qw(tar --strip-components=1 -xzf -)
+        or die "command failed: --strip-components=1 -xzf:$!";
+    print $fh $tgz;
+    close $fh
+        or die "failed to extract the submodule, tar exited with $?";
+    chdir $cwd
+        or die "failed to return to $cwd:$!";
+}
+
+sub fetch_url {
+    my $url = shift;
+    my $resp = HTTP::Tiny->new->get($url);
+    die "failed to fetch $url, got $resp->{status} from server"
+        unless $resp->{success} && $resp->{status} == 200;
+    $resp->{content};
+}
+
+sub fetch_json {
+    my $url = shift;
+    decode_json fetch_url($url);
+}
+
+sub get_map_of_submodules {
+    my $repo = shift;
+    my $gitmodules = decode_base64(fetch_json("$api_url/repos/$repo/contents/.gitmodules?ref=$ref")->{content});
+    my %map;
+    while ($gitmodules =~ m{
+        \[submodule .*?
+        \n\s+ path \s*=\s* (\S+) \s*
+        \n\s+ url  \s*=\s* (\S+) \s*
+        \n
+    }xgs) {
+        my ($path, $url) = ($1, $2);
+        $url =~ m{https?://[^/]+/([^/]+/[^/]+)\.git}
+            or die "failed to extract owner/repo from URL: $url";
+        $map{$path} = $1;
+    }
+    %map;
+}

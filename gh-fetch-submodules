@@ -27,7 +27,6 @@ use warnings;
 use Getopt::Long;
 use HTTP::Tiny;
 use JSON::PP qw(decode_json);
-use MIME::Base64 qw(decode_base64);
 use POSIX qw(getcwd);
 
 my $cwd = getcwd;
@@ -68,19 +67,19 @@ if (! defined $ref) {
 }
 
 # get list of submodules
-print STDERR "fetching .gitmodule...\n";
-my %submodules = get_map_of_submodules($repo);
+my %submodules = get_map_of_submodules();
 
 for my $dir (sort keys %submodules) {
     my $subrepo = $submodules{$dir};
 
     # fetch the submodule version
     my $sha = fetch_json("$api_url/repos/$repo/contents/$dir?ref=$ref")->{sha};
+    $sha = substr $sha, 0, 7;
 
-    printf STDERR 'extracting %s@%.7s to %s'."\n", $subrepo, $sha, $dir;
+    print STDERR "extracting $subrepo\@$sha to $dir\n";
 
     # fetch the submodule archive
-    my $tgz = fetch_url("$api_url/repos/$subrepo/tarball/$ref");
+    my $tgz = fetch_url("$api_url/repos/$subrepo/tarball/$sha");
 
     # extract the archive
     system(qw(rm -rf), $dir) == 0
@@ -112,8 +111,14 @@ sub fetch_json {
 }
 
 sub get_map_of_submodules {
-    my $repo = shift;
-    my $gitmodules = decode_base64(fetch_json("$api_url/repos/$repo/contents/.gitmodules?ref=$ref")->{content});
+    open my $fh, '<', '.gitmodules'
+        or die "failed to open .gitmodules:$!";
+    my $gitmodules = do {
+        open my $fh, "<", ".gitmodules"
+            or die "failed to open .gitmodules:$!";
+        local $/;
+        <$fh>
+    };
     my %map;
     while ($gitmodules =~ m{
         \[submodule .*?
